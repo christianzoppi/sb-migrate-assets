@@ -1,0 +1,24 @@
+{
+  "name": "migrate-assets",
+  "version": "1.0.0",
+  "description": "Migrate assets from a Storyblok space to another, replacing URLs in content.",
+  "main": "index.js",
+  "type": "module",
+  "engines": {
+    "node": ">=14"
+  },
+  "scripts": {
+    "start": "node index"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^0.21.1",
+    "chalk": "^4.1.0",
+    "form-data": "^3.0.0",
+    "inquirer": "^7.3.3",
+    "promise-throttle": "^1.1.2",
+    "request": "^2.88.2",
+    "storyblok-js-client": "^3.3.0"
+  }
+}
