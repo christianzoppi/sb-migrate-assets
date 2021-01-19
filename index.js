@@ -17,9 +17,9 @@ const questions = [
     name: 'target_space_id',
     message: "Please enter the Target Space Id",
   },
-];
+]
 
 inquirer.prompt(questions).then((answers) => {
-    const migration = new Migration(answers.oauth, answers.source_space_id, answers.target_space_id)
-    migration.start()
-});
+  const migration = new Migration(answers.oauth, answers.source_space_id, answers.target_space_id)
+  migration.start()
+})
