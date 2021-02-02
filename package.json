@@ -13,12 +13,11 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "async": "^3.2.0",
     "axios": "^0.21.1",
     "chalk": "^4.1.0",
     "form-data": "^3.0.0",
     "inquirer": "^7.3.3",
-    "promise-throttle": "^1.1.2",
-    "request": "^2.88.2",
     "storyblok-js-client": "^3.3.0"
   }
 }

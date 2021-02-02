@@ -2,13 +2,8 @@ import chalk from 'chalk'
 import StoryblokClient from 'storyblok-js-client'
 import FormData from 'form-data'
 import https from 'https'
-import PromiseThrottle from 'promise-throttle'
 import fs from 'fs'
-
-const promiseThrottle = new PromiseThrottle({
-  requestsPerSecond: 3,           // up to 1 request per second
-  promiseImplementation: Promise  // the Promise library you are using
-});
+import async from 'async'
 
 // Throttling
 export default class Migration {
@@ -21,10 +16,11 @@ export default class Migration {
   target_space_id
   oauth
 
-  constructor(oauth, source_space_id, target_space_id) {
+  constructor(oauth, source_space_id, target_space_id, simultaneous_uploads) {
     this.source_space_id = source_space_id
     this.target_space_id = target_space_id
     this.oauth = oauth
+    this.simultaneous_uploads = simultaneous_uploads
   }
 
   /**
@@ -142,11 +138,17 @@ export default class Migration {
   async uploadAssets() {
     this.stepMessage('3', `Uploading all the assets to the target space.`)
 
-    await Promise.all(this.assets_list.map((asset) => {
-      const asset_url = asset.replace('s3.amazonaws.com/', '')
-      this.assets.push({ original_url: asset_url })
-      return this.uploadAsset(asset_url)
-    }))
+    return new Promise((resolve) => {
+      async.eachLimit(this.assets_list, this.simultaneous_uploads, async (asset) => {
+        console.log(asset)
+        const asset_url = asset.replace('s3.amazonaws.com/', '')
+        this.assets.push({ original_url: asset_url })
+        await this.uploadAsset(asset_url)
+      }, (err) => {
+        console.log(err)
+        resolve()
+      })
+    })
   }
 
   /**
@@ -185,53 +187,51 @@ export default class Migration {
    * Upload a single Asset to the space
    */
   async uploadAsset(asset) {
-    return promiseThrottle.add(
-      () => new Promise(async (resolve) => {
-        const asset_data = this.getAssetData(asset)
-        try {
-          await this.downloadAsset(asset)
-          const new_asset_request = await this.storyblok.post(`spaces/${this.target_space_id}/assets`, { filename: asset_data.filename })
-          if (new_asset_request.status != 200) {
-            return resolve({ success: false })
-          }
-
-          const signed_request = new_asset_request.data
-          let form = new FormData()
-          for (let key in signed_request.fields) {
-            form.append(key, signed_request.fields[key])
-          }
-          form.append('file', fs.createReadStream(asset_data.filepath))
-          form.submit(signed_request.post_url, (err) => {
-            if (fs.existsSync(asset_data.filepath) || fs.existsSync(asset_data.folder)) {
-              fs.rmdirSync(asset_data.folder, { recursive: true })
-            }
-            if (err) {
-              resolve({ success: false })
-            } else {
-              let asset_object = this.assets.find(item => item && item.original_url == asset)
-              asset_object.new_url = signed_request.pretty_url
-              resolve({ success: true })
-            }
-          })
-        } catch (err) {
-          if (err.config && err.config.url === `/spaces/${this.target_space_id}/assets` &&
-            (err.code === 'ECONNABORTED' || err.message.includes('429'))) {
-            if (this.assets_retries[asset] > this.retries_limit) {
-              resolve({ success: false })
-            } else {
-              if (!this.assets_retries[asset]) {
-                this.assets_retries[asset] = 1
-              } else {
-                ++this.assets_retries[asset]
-              }
-              resolve(this.uploadAsset(asset))
-            }
-          } else {
-            resolve({ success: false })
-          }
+    return new Promise(async (resolve) => {
+      const asset_data = this.getAssetData(asset)
+      try {
+        await this.downloadAsset(asset)
+        const new_asset_request = await this.storyblok.post(`spaces/${this.target_space_id}/assets`, { filename: asset_data.filename })
+        if (new_asset_request.status != 200) {
+          return resolve({ success: false })
         }
-      })
-    )
+
+        const signed_request = new_asset_request.data
+        let form = new FormData()
+        for (let key in signed_request.fields) {
+          form.append(key, signed_request.fields[key])
+        }
+        form.append('file', fs.createReadStream(asset_data.filepath))
+        form.submit(signed_request.post_url, (err) => {
+          if (fs.existsSync(asset_data.filepath) || fs.existsSync(asset_data.folder)) {
+            fs.rmdirSync(asset_data.folder, { recursive: true })
+          }
+          if (err) {
+            resolve({ success: false })
+          } else {
+            let asset_object = this.assets.find(item => item && item.original_url == asset)
+            asset_object.new_url = signed_request.pretty_url
+            resolve({ success: true })
+          }
+        })
+      } catch (err) {
+        if (err?.config.url === `/spaces/${this.target_space_id}/assets` &&
+          (err.code === 'ECONNABORTED' || err.message.includes('429'))) {
+          if (this.assets_retries[asset] > this.retries_limit) {
+            resolve({ success: false })
+          } else {
+            if (!this.assets_retries[asset]) {
+              this.assets_retries[asset] = 1
+            } else {
+              ++this.assets_retries[asset]
+            }
+            resolve(this.uploadAsset(asset))
+          }
+        } else {
+          resolve({ success: false })
+        }
+      }
+    })
   }
 
   /**
