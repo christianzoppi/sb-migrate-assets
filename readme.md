@@ -6,4 +6,4 @@ Once all the assets are stored in the target space, the script will replace the 
 Run `npm i` 
 
 ### Usage
-Run `npm run start` and provide a OAUTH code from your account, the id of the source space and the id of the target space.  
+Run `npm run start` and provide a OAUTH code from your account, the id of the source space, the id of the target space and the number of the max simultaneous uploads. The default for the max simultaneous uploads is 20 but you can increase it slightly to make the upload faster if your computer and connection can handle it or you can decrease it if you want to use less bandwidth and memory.  
