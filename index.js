@@ -21,7 +21,7 @@ const questions = [
     type: 'input',
     name: 'simultaneous_uploads',
     message: "Simultaneous Uploads",
-    default: 3
+    default: 20
   },
 ]
 

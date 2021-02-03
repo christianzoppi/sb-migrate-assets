@@ -140,7 +140,6 @@ export default class Migration {
 
     return new Promise((resolve) => {
       async.eachLimit(this.assets_list, this.simultaneous_uploads, async (asset) => {
-        console.log(asset)
         const asset_url = asset.replace('s3.amazonaws.com/', '')
         this.assets.push({ original_url: asset_url })
         await this.uploadAsset(asset_url)
