@@ -68,7 +68,6 @@ export default class Migration {
       this.storyblok = new StoryblokClient({
         accessToken: this.target_space_token,
         oauthToken: this.oauth,
-        timeout: 5000,
         rateLimit: 3
       })
     } catch (err) {
