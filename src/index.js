@@ -213,7 +213,7 @@ export default class Migration {
           }
         })
       } catch (err) {
-        if (err?.config.url === `/spaces/${this.target_space_id}/assets` &&
+        if (err.config?.url === `/spaces/${this.target_space_id}/assets` &&
           (err.code === 'ECONNABORTED' || err.message.includes('429'))) {
           if (this.assets_retries[asset] > this.retries_limit) {
             resolve({ success: false })
