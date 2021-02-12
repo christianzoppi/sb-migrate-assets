@@ -4,6 +4,8 @@ import FormData from 'form-data'
 import https from 'https'
 import fs from 'fs'
 import async from 'async'
+import sizeOf from 'image-size'
+import path from 'path'
 
 // Throttling
 export default class Migration {
@@ -156,7 +158,8 @@ export default class Migration {
     return {
       filename: url.split('?')[0].split('/').pop(),
       folder: `./temp/${url.split('?')[0].split('/').slice(0, -1).pop()}`,
-      filepath: `./temp/${url.split('?')[0].split('/').slice(0, -1).pop()}/${url.split('?')[0].split('/').pop()}`
+      filepath: `./temp/${url.split('?')[0].split('/').slice(0, -1).pop()}/${url.split('?')[0].split('/').pop()}`,
+      ext: url.split('?')[0].split('/').pop().split('.').pop()
     }
   }
 
@@ -189,7 +192,12 @@ export default class Migration {
       const asset_data = this.getAssetData(asset)
       try {
         await this.downloadAsset(asset)
-        const new_asset_request = await this.storyblok.post(`spaces/${this.target_space_id}/assets`, { filename: asset_data.filename })
+        let new_asset_payload = { filename: asset_data.filename }
+        try {
+          const dimensions = sizeOf(asset_data.filepath)
+          new_asset_payload.size = `${dimensions.width}x${dimensions.height}`
+        } catch(err) {}
+        const new_asset_request = await this.storyblok.post(`spaces/${this.target_space_id}/assets`, new_asset_payload)
         if (new_asset_request.status != 200) {
           return resolve({ success: false })
         }
