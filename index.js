@@ -5,7 +5,7 @@ const questions = [
   {
     type: 'input',
     name: 'oauth',
-    message: "Please enter your OAUTH Token",
+    message: "Please enter your Personal access token (get one at http://app.storyblok.com/#!/me/account)",
   },
   {
     type: 'input',
