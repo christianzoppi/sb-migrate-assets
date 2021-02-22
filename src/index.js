@@ -3,24 +3,17 @@ import StoryblokClient from 'storyblok-js-client'
 import FormData from 'form-data'
 import https from 'https'
 import fs from 'fs'
-import async, { reject } from 'async'
+import async from 'async'
 
 // Throttling
 export default class Migration {
-  assets_uploads = []
-  assets = []
-  stories_list = []
-  retries_limit = 4
-  assets_retries = {}
-  source_space_id
-  target_space_id
-  oauth
-
   constructor(oauth, source_space_id, target_space_id, simultaneous_uploads) {
     this.source_space_id = source_space_id
     this.target_space_id = target_space_id
     this.oauth = oauth
     this.simultaneous_uploads = simultaneous_uploads
+    this.assets_retries = {}
+    this.retries_limit = 4
   }
 
   /**
@@ -164,6 +157,7 @@ export default class Migration {
    */
   async uploadAssets() {
     this.stepMessage('3', ``, `0 of ${this.assets_list.length} assets uploaded`)
+    this.assets = []
 
     return new Promise((resolve) => {
       let total = 0
@@ -221,22 +215,23 @@ export default class Migration {
    * Upload a single Asset to the space
    */
   async uploadAsset(asset) {
-    return new Promise(async (resolve) => {
-      const asset_data = this.getAssetData(asset)
-      try {
-        await this.downloadAsset(asset)
-        let new_asset_payload = { filename: asset_data.filename, size: asset_data.dimensions }
-        const new_asset_request = await this.storyblok.post(`spaces/${this.target_space_id}/assets`, new_asset_payload)
-        if (new_asset_request.status != 200) {
-          return resolve({ success: false })
-        }
+    const asset_data = this.getAssetData(asset)
+    try {
+      await this.downloadAsset(asset)
+      let new_asset_payload = { filename: asset_data.filename, size: asset_data.dimensions }
+      const new_asset_request = await this.storyblok.post(`spaces/${this.target_space_id}/assets`, new_asset_payload)
+      if (new_asset_request.status != 200) {
+        return resolve({ success: false })
+      }
 
-        const signed_request = new_asset_request.data
-        let form = new FormData()
-        for (let key in signed_request.fields) {
-          form.append(key, signed_request.fields[key])
-        }
-        form.append('file', fs.createReadStream(asset_data.filepath))
+      const signed_request = new_asset_request.data
+      let form = new FormData()
+      for (let key in signed_request.fields) {
+        form.append(key, signed_request.fields[key])
+      }
+      form.append('file', fs.createReadStream(asset_data.filepath))
+
+      return new Promise((resolve) => {
         form.submit(signed_request.post_url, (err) => {
           if (fs.existsSync(asset_data.filepath) || fs.existsSync(asset_data.folder)) {
             fs.rmdirSync(asset_data.folder, { recursive: true })
@@ -249,24 +244,24 @@ export default class Migration {
             resolve({ success: true })
           }
         })
-      } catch (err) {
-        if (err.config?.url === `/spaces/${this.target_space_id}/assets` &&
-          (err.code === 'ECONNABORTED' || err.message.includes('429'))) {
-          if (this.assets_retries[asset] > this.retries_limit) {
-            resolve({ success: false })
-          } else {
-            if (!this.assets_retries[asset]) {
-              this.assets_retries[asset] = 1
-            } else {
-              ++this.assets_retries[asset]
-            }
-            resolve(this.uploadAsset(asset))
-          }
+      })
+    } catch (err) {
+      if (err.config?.url === `/spaces/${this.target_space_id}/assets` &&
+        (err.code === 'ECONNABORTED' || err.message.includes('429'))) {
+        if (this.assets_retries[asset] > this.retries_limit) {
+          return { success: false }
         } else {
-          resolve({ success: false })
+          if (!this.assets_retries[asset]) {
+            this.assets_retries[asset] = 1
+          } else {
+            ++this.assets_retries[asset]
+          }
+          return this.uploadAsset(asset)
         }
+      } else {
+        resolve({ success: false })
       }
-    })
+    }
   }
 
   /**
@@ -298,22 +293,20 @@ export default class Migration {
       return JSON.stringify(original_story.content) !== JSON.stringify(story.content)
     })
 
-    const migration_result = await Promise.allSettled(stories_with_updates.map((story) => {
-      return new Promise(async (resolve) => {
-        const original_story = this.stories_list.find(s => s.id === story.id)
-        delete story.content._editable
-        let post_data = { story }
-        if (story.published && !story.unpublished_changes) {
-          post_data.publish = 1
-        }
-        try {
-          await this.storyblok.put(`spaces/${this.target_space_id}/stories/${story.id}`, post_data)
-          this.stepMessage('5', ``, `${++total} of ${stories_with_updates.length} stories updated.`)
-          resolve(true)
-        } catch(err) {
-          resolve()
-        }
-      })
+    const migration_result = await Promise.allSettled(stories_with_updates.map(async (story) => {
+      const original_story = this.stories_list.find(s => s.id === story.id)
+      delete story.content._editable
+      let post_data = { story }
+      if (story.published && !story.unpublished_changes) {
+        post_data.publish = 1
+      }
+      try {
+        await this.storyblok.put(`spaces/${this.target_space_id}/stories/${story.id}`, post_data)
+        this.stepMessage('5', ``, `${++total} of ${stories_with_updates.length} stories updated.`)
+        return true
+      } catch(err) {
+        return false
+      }
     }))
     process.stdout.clearLine()
     this.stepMessageEnd('5', `Updated stories in target space.`)
