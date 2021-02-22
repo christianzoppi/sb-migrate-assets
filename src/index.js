@@ -3,9 +3,7 @@ import StoryblokClient from 'storyblok-js-client'
 import FormData from 'form-data'
 import https from 'https'
 import fs from 'fs'
-import async from 'async'
-import sizeOf from 'image-size'
-import path from 'path'
+import async, { reject } from 'async'
 
 // Throttling
 export default class Migration {
@@ -35,8 +33,19 @@ export default class Migration {
   /**
    * Print a message of the current step
    */
-  stepMessage(index, text) {
-    console.log(chalk.white.bgBlue(` ${index}/5 `), `${text}`)
+  stepMessage(index, text, append_text) {
+    process.stdout.clearLine()
+    process.stdout.cursorTo(0)
+    process.stdout.write(`${chalk.white.bgBlue(` ${index}/5 `)} ${text} ${append_text ? chalk.black.bgYellow(` ${append_text} `) : ''}`)
+  }
+
+  /**
+   * Print a message of the completed step
+   */
+  stepMessageEnd(index, text) {
+    process.stdout.clearLine()
+    process.stdout.cursorTo(0)
+    process.stdout.write(`${chalk.black.bgGreen(` ${index}/5 `)} ${text}\n`)
   }
 
   /**
@@ -81,7 +90,7 @@ export default class Migration {
    * Get the Stories from the target space
    */
   async getStories() {
-    this.stepMessage('1', `Fetching all the stories from the target space.`)
+    this.stepMessage('1', `Fetching stories from target space.`)
     try {
       const stories_page_request = await this.storyblok.get('cdn/stories', {
         version: 'draft',
@@ -90,6 +99,7 @@ export default class Migration {
       })
       const pages_total = Math.ceil(stories_page_request.headers.total / 100)
       const stories_requests = []
+      const stories_management_requests = []
       for (let i = 1; i <= pages_total; i++) {
         stories_requests.push(
           this.storyblok.get('cdn/stories', {
@@ -98,9 +108,24 @@ export default class Migration {
             page: i
           })
         )
+        stories_management_requests.push(
+          this.storyblok.get(`spaces/${this.target_space_id}/stories`, {
+            version: 'draft',
+            per_page: 100,
+            page: i
+          })
+        )
       }
       const stories_responses = await Promise.all(stories_requests)
+      const stories_responses_management = await Promise.all(stories_management_requests)
       this.stories_list = stories_responses.map(r => r.data.stories).flat()
+      let stories_list_management = stories_responses_management.map(r => r.data.stories).flat()
+      this.stories_list.forEach(story => {
+        let story_management = stories_list_management.find(s => s.uuid === story.uuid)
+        story.published = story_management.published
+        story.unpublished_changes = story_management.unpublished_changes
+      })
+      this.stepMessageEnd('1', `Stories fetched from target space.`)
     } catch (err) {
       this.migrationError('Error fetching the stories. Please double check the target space id.')
     }
@@ -110,7 +135,7 @@ export default class Migration {
    * Get the Assets list from the source space
    */
   async getAssets() {
-    this.stepMessage('2', `Fetching all the assets from the source space.`)
+    this.stepMessage('2', `Fetching assets from source space.`)
     try {
       const assets_page_request = await this.storyblok.get(`spaces/${this.source_space_id}/assets`, {
         per_page: 100,
@@ -128,6 +153,7 @@ export default class Migration {
       }
       const assets_responses = await Promise.all(assets_requests)
       this.assets_list = assets_responses.map(r => r.data.assets).flat().map((asset) => asset.filename)
+      this.stepMessageEnd('2', `Fetched assets from source space.`)
     } catch (err) {
       this.migrationError('Error fetching the assets. Please double check the source space id.')
     }
@@ -137,15 +163,18 @@ export default class Migration {
    * Upload Assets to the target space
    */
   async uploadAssets() {
-    this.stepMessage('3', `Uploading all the assets to the target space.`)
+    this.stepMessage('3', ``, `0 of ${this.assets_list.length} assets uploaded`)
 
     return new Promise((resolve) => {
+      let total = 0
       async.eachLimit(this.assets_list, this.simultaneous_uploads, async (asset) => {
         const asset_url = asset.replace('s3.amazonaws.com/', '')
         this.assets.push({ original_url: asset_url })
         await this.uploadAsset(asset_url)
-      }, (err) => {
-        console.log(err)
+        this.stepMessage('3', ``, `${++total} of ${this.assets_list.length} assets uploaded`)
+      }, () => {
+        process.stdout.clearLine()
+        this.stepMessageEnd('3', `Uploaded assets to target space.`)
         resolve()
       })
     })
@@ -155,11 +184,15 @@ export default class Migration {
    * Return an object with filename, folder and filepath of an asset in the temp folder
    */
   getAssetData(url) {
+    const url_parts = url.replace('https://a.storyblok.com/f/', '').split('/')
+    const dimensions = url_parts.length === 4 ? url_parts[1] : ''
+
     return {
       filename: url.split('?')[0].split('/').pop(),
       folder: `./temp/${url.split('?')[0].split('/').slice(0, -1).pop()}`,
       filepath: `./temp/${url.split('?')[0].split('/').slice(0, -1).pop()}/${url.split('?')[0].split('/').pop()}`,
-      ext: url.split('?')[0].split('/').pop().split('.').pop()
+      ext: url.split('?')[0].split('/').pop().split('.').pop(),
+      dimensions: dimensions
     }
   }
 
@@ -192,11 +225,7 @@ export default class Migration {
       const asset_data = this.getAssetData(asset)
       try {
         await this.downloadAsset(asset)
-        let new_asset_payload = { filename: asset_data.filename }
-        try {
-          const dimensions = sizeOf(asset_data.filepath)
-          new_asset_payload.size = `${dimensions.width}x${dimensions.height}`
-        } catch(err) {}
+        let new_asset_payload = { filename: asset_data.filename, size: asset_data.dimensions }
         const new_asset_request = await this.storyblok.post(`spaces/${this.target_space_id}/assets`, new_asset_payload)
         if (new_asset_request.status != 200) {
           return resolve({ success: false })
@@ -244,9 +273,9 @@ export default class Migration {
    * Replace the new urls in the target space stories
    */
   replaceAssetsInStories() {
-    this.stepMessage('4', `Replacing URLs in the stories.`)
+    this.stepMessage('4', ``, `0 of ${this.assets.length} URLs replaced`)
     this.updated_stories = this.stories_list.slice(0)
-    this.assets.forEach((asset) => {
+    this.assets.forEach((asset, index) => {
       const asset_url_reg = new RegExp(asset.original_url.replace('https:', '').replace('http:', ''), 'g')
       // If the asset was uploaded its URL gets replaced in the content
       if (asset.new_url) {
@@ -254,25 +283,40 @@ export default class Migration {
       } else {
         this.updated_stories = JSON.parse(JSON.stringify(this.updated_stories).replace(asset_url_reg, ''))
       }
+      this.stepMessage('4', ``, `${index} of ${this.assets.length} URLs replaced`)
     })
+    this.stepMessageEnd('4', `Replaced all URLs in the stories.`)
   }
 
   /**
    * Save the updated stories in Storyblok
    */
   async saveStories() {
-    this.stepMessage('5', `Updating the stories in the target space.`)
-    const migration_result = await Promise.allSettled(this.updated_stories.map((story) => {
+    let total = 0
+    const stories_with_updates = this.updated_stories.filter((story) => {
       const original_story = this.stories_list.find(s => s.id === story.id)
-      if (JSON.stringify(original_story.content) !== JSON.stringify(story.content)) {
+      return JSON.stringify(original_story.content) !== JSON.stringify(story.content)
+    })
+
+    const migration_result = await Promise.allSettled(stories_with_updates.map((story) => {
+      return new Promise(async (resolve) => {
+        const original_story = this.stories_list.find(s => s.id === story.id)
         delete story.content._editable
         let post_data = { story }
-        if (story.published_at) {
+        if (story.published && !story.unpublished_changes) {
           post_data.publish = 1
         }
-        return this.storyblok.put(`spaces/${this.target_space_id}/stories/${story.id}`, post_data)
-      }
+        try {
+          await this.storyblok.put(`spaces/${this.target_space_id}/stories/${story.id}`, post_data)
+          this.stepMessage('5', ``, `${++total} of ${stories_with_updates.length} stories updated.`)
+          resolve(true)
+        } catch(err) {
+          resolve()
+        }
+      })
     }))
+    process.stdout.clearLine()
+    this.stepMessageEnd('5', `Updated stories in target space.`)
     console.log(chalk.black.bgGreen(' ✓ Completed '), `${migration_result.filter(r => r.status === 'fulfilled' && r.value).length} ${migration_result.filter(r => r.status === 'fulfilled' && r.value).length === 1 ? 'story' : 'stories'} updated.`)
   }
 }
