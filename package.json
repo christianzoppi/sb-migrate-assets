@@ -1,6 +1,6 @@
 {
   "name": "migrate-assets",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Migrate assets from a Storyblok space to another, replacing URLs in content.",
   "main": "index.js",
   "type": "module",
@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node index"
   },
-  "author": "",
+  "author": "Christian Zoppi",
   "license": "ISC",
   "dependencies": {
     "async": "^3.2.0",
